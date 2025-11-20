@@ -1,0 +1,70 @@
+# -----------------------
+# Python
+# -----------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.pkl
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Poetry
+poetry.lock
+
+# -----------------------
+# FastAPI / Uvicorn
+# -----------------------
+*.log
+
+# -----------------------
+# Project files
+# -----------------------
+.env
+.env.*
+*.env
+
+# Data / TTS output
+data/
+**/data/
+tmp_*.mp3
+*.mp3
+*.wav
+
+# -----------------------
+# IDE / Editor
+# -----------------------
+# PyCharm
+.idea/
+*.iml
+
+# VSCode
+.vscode/
+
+# -----------------------
+# OS
+# -----------------------
+.DS_Store
+Thumbs.db
+
+# -----------------------
+# Node (혹시 프론트 들어와도 대비)
+# -----------------------
+node_modules/
+
+# -----------------------
+# Build / dist
+# -----------------------
+dist/
+build/
+
+# -----------------------
+# Python packaging
+# -----------------------
+*.egg-info/
+.eggs/

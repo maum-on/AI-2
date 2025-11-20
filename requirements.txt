@@ -1,0 +1,18 @@
+fastapi
+uvicorn
+httpx
+pydantic
+apscheduler
+python-dotenv
+openai>=1.40.0
+
+# 오디오 처리
+pydub
+ffmpeg-python
+
+# 로그용
+rich
+
+# 테스트용(선택)
+pytest
+PyYAML
