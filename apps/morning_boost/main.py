@@ -122,6 +122,7 @@ def create_app() -> FastAPI:
 
         return JSONResponse(
             {
+                "version": "mb-v2",
                 "status": "ok",
                 "user_id": user_id,
                 "diary_used": diary_data is not None,
