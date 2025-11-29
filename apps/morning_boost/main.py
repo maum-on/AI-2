@@ -19,7 +19,7 @@ from apps.morning_boost.prompt_engine import build_boost_prompt
 from apps.morning_boost.tts_engine import generate_tts_to_file, ping_openai
 from apps.morning_boost.utils import get_data_dir, load_config
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://15.134.86.188:8080")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://13.209.35.235:8080")
 
 
 def fetch_latest_diary(user_id: str) -> Optional[Dict[str, Any]]:
