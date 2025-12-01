@@ -75,13 +75,17 @@ async def boost(
 
     generate_tts_to_file(prompt, out_path)
 
+    # 정적 파일 URL (main.py에서 /static/morning_boost 로 mount 했다고 가정)
+    audio_url = f"/static/morning_boost/{file_name}"
+
     return JSONResponse(
         {
             "version": "mb-v2",
             "status": "ok",
             "user_id": user_id,
             "diary_used": diary_data is not None,
-            "audio_path": str(out_path),
+            "audio_url": audio_url,          # 🔹 프론트/백에서 이걸로 재생
+            "audio_path": str(out_path),     # 🔹 내부 디버깅용
             "diary_meta": {
                 "has_diary": diary_data is not None,
                 "emotion": diary_data.get("emotion") if diary_data else None,
@@ -110,12 +114,15 @@ async def boost_from_json(req: BoostRequest):
 
     generate_tts_to_file(prompt, out_path)
 
+    audio_url = f"/static/morning_boost/{file_name}"
+
     return JSONResponse(
         {
             "version": "mb-v2-json",
             "status": "ok",
             "user_id": user_id,
             "diary_used": True,
+            "audio_url": audio_url,
             "audio_path": str(out_path),
             "diary_meta": {
                 "has_diary": True,
@@ -126,7 +133,7 @@ async def boost_from_json(req: BoostRequest):
 
 
 # ============================
-# 3) JSON 파일 업로드 버전 (요청하신 부분!!)
+# 3) JSON 파일 업로드 버전
 # ============================
 
 @router.post("/from-json-file")
@@ -178,6 +185,8 @@ async def boost_from_json_file(file: UploadFile = File(..., description="일기 
 
     generate_tts_to_file(prompt, out_path)
 
+    audio_url = f"/static/morning_boost/{file_name}"
+
     # 5) 응답
     return JSONResponse(
         {
@@ -185,6 +194,7 @@ async def boost_from_json_file(file: UploadFile = File(..., description="일기 
             "status": "ok",
             "user_id": user_id,
             "diary_used": True,
+            "audio_url": audio_url,
             "audio_path": str(out_path),
             "diary_meta": {
                 "has_diary": True,

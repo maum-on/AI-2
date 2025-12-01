@@ -14,6 +14,7 @@ from typing import Optional, Dict, Any
 import httpx
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles  # ★ 정적 파일 서빙용
 
 from apps.morning_boost.prompt_engine import build_boost_prompt
 from apps.morning_boost.tts_engine import generate_tts_to_file, ping_openai
@@ -80,6 +81,18 @@ def create_app() -> FastAPI:
 
     cfg = load_config()  # 지금은 안 쓰지만 나중에 시간/옵션 config 용
 
+    # ==============================
+    # 🔹 정적 파일 서빙 설정
+    # /app/data/morning_boost 에 저장되는 mp3를
+    # /static/morning_boost/파일명.mp3 로 외부에서 접근 가능하게 만든다.
+    # ==============================
+    audio_dir = get_data_dir()  # 예: /app/data/morning_boost
+    app.mount(
+        "/static/morning_boost",
+        StaticFiles(directory=str(audio_dir)),
+        name="morning_boost_static",
+    )
+
     @app.get("/health")
     async def health():
         return {"status": "ok"}
@@ -100,15 +113,6 @@ def create_app() -> FastAPI:
         """
         diary_data = fetch_latest_diary(user_id)
 
-        # diary_data 예:
-        # {
-        #   "emotion": "happy",
-        #   "draw": "그림 url",
-        #   "write_diary": "...",
-        #   "file_summation": ["느좋 카페 방문", ...],
-        #   "ai_reply": "대충 ai 답장",
-        #   "ai_draw_reply": "그림 일기 ai 답장"
-        # }
         prompt = build_boost_prompt(
             user_id=user_id,
             diary=diary_data,  # None 일 수도 있음
@@ -120,15 +124,21 @@ def create_app() -> FastAPI:
 
         generate_tts_to_file(prompt, out_path)
 
+        # 정적 파일 URL (/static/morning_boost/파일명.mp3)
+        audio_url = f"/static/morning_boost/{file_name}"
+
         return JSONResponse(
             {
                 "version": "mb-v2",
                 "status": "ok",
                 "user_id": user_id,
                 "diary_used": diary_data is not None,
+                # 프론트/백엔드는 이 URL을 서버 주소랑 합쳐서 쓰면 됨
+                # 예: http://15.134.86.188:8080/static/morning_boost/...
+                "audio_url": audio_url,
+                # 내부 디버깅용(원하면 제거 가능)
                 "audio_path": str(out_path),
                 "diary_meta": {
-                    # 클라이언트 디버깅용으로 간단 정보만 노출 (원하면 빼도 됨)
                     "has_diary": diary_data is not None,
                     "emotion": diary_data.get("emotion") if diary_data else None,
                 },
