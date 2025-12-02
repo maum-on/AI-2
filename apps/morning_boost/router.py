@@ -2,7 +2,6 @@
 
 from uuid import uuid4
 from typing import List, Optional, Dict, Any
-import os
 import json
 
 from fastapi import APIRouter, Query, UploadFile, File, HTTPException
@@ -13,7 +12,6 @@ from .prompt_engine import build_boost_prompt
 from .tts_engine import generate_tts_to_file, ping_openai
 from .utils import get_data_dir
 from .main import fetch_latest_diary  # user_id 방식에서 사용
-from .s3_client import upload_audio_to_s3  # S3 업로드 (선택적으로 사용)
 
 
 router = APIRouter(
@@ -56,7 +54,7 @@ async def ping():
 
 
 # ============================
-# 1) user_id 로 백엔드에서 일기 가져오는 버전
+# 1) user_id로 일기 가져오는 버전
 #    ➜ mp3 바이너리 직접 응답
 # ============================
 
@@ -66,10 +64,9 @@ async def boost(
 ):
     """
     1) 백엔드에서 최신 일기/요약 정보 가져오기
-    2) 해당 정보를 기반으로 프롬프트 생성
+    2) 프롬프트 생성
     3) TTS로 mp3 생성
-    4) mp3 바이너리를 바로 Response 로 내려줌
-       - 부가 정보: 헤더에 실어서 전달
+    4) mp3 바이너리 직접 응답 + 메타데이터는 헤더에
     """
     diary_data: Optional[Dict[str, Any]] = fetch_latest_diary(user_id)
     prompt = build_boost_prompt(user_id=user_id, diary=diary_data)
@@ -78,37 +75,27 @@ async def boost(
     file_name = f"{user_id}_{uuid4().hex}.mp3"
     out_path = out_dir / file_name
 
-    # 1) 로컬에 TTS 생성
+    # TTS 생성
     generate_tts_to_file(prompt, out_path)
-
-    # 2) (선택) S3로 업로드 → URL 헤더로만 전달
-    audio_url: Optional[str] = None
-    try:
-        audio_url = upload_audio_to_s3(out_path, user_id=user_id)
-    except Exception:
-        # S3 에러가 나도 mp3 응답은 계속 주고 싶으면 그냥 무시
-        audio_url = None
 
     emotion = None
     if diary_data:
         emotion = diary_data.get("emotion")
 
-    # 3) mp3 파일을 직접 응답 (Content-Type: audio/mpeg)
-    response = FileResponse(
+    # 파일 직접 응답
+    resp = FileResponse(
         path=str(out_path),
         media_type="audio/mpeg",
         filename=file_name,
     )
 
-    # 4) 메타데이터를 헤더에 첨부
-    response.headers["X-User-Id"] = user_id
-    response.headers["X-Diary-Used"] = "true" if diary_data is not None else "false"
+    # 메타데이터를 헤더에 전달
+    resp.headers["X-User-Id"] = user_id
+    resp.headers["X-Diary-Used"] = "true" if diary_data is not None else "false"
     if emotion:
-        response.headers["X-Emotion"] = emotion
-    if audio_url:
-        response.headers["X-Audio-Url"] = audio_url
+        resp.headers["X-Emotion"] = emotion
 
-    return response
+    return resp
 
 
 # ============================
@@ -119,9 +106,9 @@ async def boost(
 @router.post("/from-json")
 async def boost_from_json(req: BoostRequest):
     """
-    클라이언트/백엔드에서 이미 만든 일기 요약 JSON을 Body로 직접 보내는 버전.
-    mp3 바이너리를 바로 Response 로 보내고,
-    감정 등은 헤더에 실어준다.
+    클라이언트/백엔드에서 만든 일기 요약 JSON을 Body로 직접 보내는 버전.
+    mp3 바이너리를 그대로 응답하고,
+    감정 정보 등은 헤더에 담아준다.
     """
     user_id = req.user_id or "anonymous"
     diary = req.data.model_dump()
@@ -134,28 +121,20 @@ async def boost_from_json(req: BoostRequest):
 
     generate_tts_to_file(prompt, out_path)
 
-    audio_url: Optional[str] = None
-    try:
-        audio_url = upload_audio_to_s3(out_path, user_id=user_id)
-    except Exception:
-        audio_url = None
-
     emotion = diary.get("emotion")
 
-    response = FileResponse(
+    resp = FileResponse(
         path=str(out_path),
         media_type="audio/mpeg",
         filename=file_name,
     )
 
-    response.headers["X-User-Id"] = user_id
-    response.headers["X-Diary-Used"] = "true"
+    resp.headers["X-User-Id"] = user_id
+    resp.headers["X-Diary-Used"] = "true"
     if emotion:
-        response.headers["X-Emotion"] = emotion
-    if audio_url:
-        response.headers["X-Audio-Url"] = audio_url
+        resp.headers["X-Emotion"] = emotion
 
-    return response
+    return resp
 
 
 # ============================
@@ -167,8 +146,7 @@ async def boost_from_json(req: BoostRequest):
 async def boost_from_json_file(file: UploadFile = File(..., description="일기 요약 JSON 파일")):
     """
     JSON 파일(.json)을 업로드해서 처리하는 버전.
-    mp3 바이너리를 바로 Response 로 보내고,
-    감정 등은 헤더에 실어준다.
+    mp3 바이너리를 바로 응답하고, 메타데이터는 헤더에 담는다.
     """
     # 1) 파일 타입 기본 체크
     if file.content_type not in ("application/json", "text/json", "application/octet-stream"):
@@ -190,7 +168,6 @@ async def boost_from_json_file(file: UploadFile = File(..., description="일기 
     user_id = req.user_id or "anonymous"
     diary = req.data.model_dump()
 
-    # 4) 프롬프트 생성 + TTS
     prompt = build_boost_prompt(user_id=user_id, diary=diary)
 
     out_dir = get_data_dir()
@@ -199,27 +176,18 @@ async def boost_from_json_file(file: UploadFile = File(..., description="일기 
 
     generate_tts_to_file(prompt, out_path)
 
-    audio_url: Optional[str] = None
-    try:
-        audio_url = upload_audio_to_s3(out_path, user_id=user_id)
-    except Exception:
-        audio_url = None
-
     emotion = diary.get("emotion")
 
-    # 5) mp3를 파일로 직접 응답
-    response = FileResponse(
+    resp = FileResponse(
         path=str(out_path),
         media_type="audio/mpeg",
         filename=file_name,
     )
 
-    response.headers["X-User-Id"] = user_id
-    response.headers["X-Diary-Used"] = "true"
-    response.headers["X-Uploaded-Filename"] = file.filename or ""
+    resp.headers["X-User-Id"] = user_id
+    resp.headers["X-Diary-Used"] = "true"
+    resp.headers["X-Uploaded-Filename"] = file.filename or ""
     if emotion:
-        response.headers["X-Emotion"] = emotion
-    if audio_url:
-        response.headers["X-Audio-Url"] = audio_url
+        resp.headers["X-Emotion"] = emotion
 
-    return response
+    return resp
