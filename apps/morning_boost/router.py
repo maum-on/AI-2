@@ -12,6 +12,7 @@ from .prompt_engine import build_boost_prompt
 from .tts_engine import generate_tts_to_file, ping_openai
 from .utils import get_data_dir
 from .main import fetch_latest_diary  # user_id 방식에서 사용
+from .s3_client import upload_audio_to_s3  # ★ 추가
 
 
 router = APIRouter(
@@ -64,7 +65,7 @@ async def boost(
     """
     1) 백엔드에서 최신 일기/요약 정보 가져오기
     2) 해당 정보를 기반으로 프롬프트 생성
-    3) TTS로 mp3 생성 후 경로와 메타데이터 반환
+    3) TTS로 mp3 생성 후 S3 업로드
     """
     diary_data: Optional[Dict[str, Any]] = fetch_latest_diary(user_id)
     prompt = build_boost_prompt(user_id=user_id, diary=diary_data)
@@ -73,10 +74,17 @@ async def boost(
     file_name = f"{user_id}_{uuid4().hex}.mp3"
     out_path = out_dir / file_name
 
+    # 1) 로컬에 TTS 생성
     generate_tts_to_file(prompt, out_path)
 
-    # 정적 파일 URL (main.py에서 /static/morning_boost 로 mount 했다고 가정)
-    audio_url = f"/static/morning_boost/{file_name}"
+    # 2) S3로 업로드 → 외부에서 접근 가능한 URL 받기
+    audio_url = upload_audio_to_s3(out_path, user_id=user_id)
+
+    # (선택) 로컬 파일 삭제하고 싶으면 아래 주석 해제
+    # try:
+    #     out_path.unlink()
+    # except OSError:
+    #     pass
 
     return JSONResponse(
         {
@@ -84,8 +92,7 @@ async def boost(
             "status": "ok",
             "user_id": user_id,
             "diary_used": diary_data is not None,
-            "audio_url": audio_url,          # 🔹 프론트/백에서 이걸로 재생
-            "audio_path": str(out_path),     # 🔹 내부 디버깅용
+            "audio_url": audio_url,          # 🔹 프론트/백은 이 URL로 재생
             "diary_meta": {
                 "has_diary": diary_data is not None,
                 "emotion": diary_data.get("emotion") if diary_data else None,
@@ -104,7 +111,7 @@ async def boost_from_json(req: BoostRequest):
     클라이언트/백엔드에서 이미 만든 일기 요약 JSON을 Body로 직접 보내는 버전.
     """
     user_id = req.user_id or "anonymous"
-    diary = req.data.model_dump()  # dict로 변환
+    diary = req.data.model_dump()
 
     prompt = build_boost_prompt(user_id=user_id, diary=diary)
 
@@ -113,8 +120,7 @@ async def boost_from_json(req: BoostRequest):
     out_path = out_dir / file_name
 
     generate_tts_to_file(prompt, out_path)
-
-    audio_url = f"/static/morning_boost/{file_name}"
+    audio_url = upload_audio_to_s3(out_path, user_id=user_id)
 
     return JSONResponse(
         {
@@ -123,7 +129,6 @@ async def boost_from_json(req: BoostRequest):
             "user_id": user_id,
             "diary_used": True,
             "audio_url": audio_url,
-            "audio_path": str(out_path),
             "diary_meta": {
                 "has_diary": True,
                 "emotion": diary.get("emotion"),
@@ -140,23 +145,8 @@ async def boost_from_json(req: BoostRequest):
 async def boost_from_json_file(file: UploadFile = File(..., description="일기 요약 JSON 파일")):
     """
     JSON 파일(.json)을 업로드해서 처리하는 버전.
-
-    기대하는 파일 내용 예시:
-    {
-      "user_id": "test",
-      "code": 200,
-      "message": "9월 16일 정보 조회 성공",
-      "data": {
-        "emotion": "happy",
-        "draw": "그림 url",
-        "write_diary": "오늘의 일기를 작성했습니다...",
-        "file_summation": ["느좋 카페 방문", "페스티벌 관람", "성적 A+"],
-        "ai_reply": "대충 ai 답장",
-        "ai_draw_reply": "그림 일기 ai 답장"
-      }
-    }
     """
-    # 1) 파일 타입 기본 체크 (선택)
+    # 1) 파일 타입 기본 체크
     if file.content_type not in ("application/json", "text/json", "application/octet-stream"):
         raise HTTPException(status_code=400, detail="JSON 파일을 업로드해주세요.")
 
@@ -184,8 +174,7 @@ async def boost_from_json_file(file: UploadFile = File(..., description="일기 
     out_path = out_dir / file_name
 
     generate_tts_to_file(prompt, out_path)
-
-    audio_url = f"/static/morning_boost/{file_name}"
+    audio_url = upload_audio_to_s3(out_path, user_id=user_id)
 
     # 5) 응답
     return JSONResponse(
@@ -195,7 +184,6 @@ async def boost_from_json_file(file: UploadFile = File(..., description="일기 
             "user_id": user_id,
             "diary_used": True,
             "audio_url": audio_url,
-            "audio_path": str(out_path),
             "diary_meta": {
                 "has_diary": True,
                 "emotion": diary.get("emotion"),

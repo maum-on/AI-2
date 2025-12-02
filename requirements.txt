@@ -16,3 +16,5 @@ rich
 # 테스트용(선택)
 pytest
 PyYAML
+
+boto3
