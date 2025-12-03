@@ -38,6 +38,9 @@ class BoostRequest(BaseModel):
     message: str
     data: DiaryData
 
+    class Config:
+        extra = "ignore"  # 혹시 다른 필드가 들어와도 무시
+
 
 # ============================
 # Health / Ping
