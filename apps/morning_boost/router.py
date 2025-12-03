@@ -20,6 +20,48 @@ router = APIRouter(
 )
 
 # ============================
+# 감정 매핑 (한글 → 영어 코드)
+# ============================
+
+EMOTION_KO_TO_EN: Dict[str, str] = {
+    "행복": "happy",
+    "기쁨": "happy",
+    "즐거움": "happy",
+
+    "슬픔": "sad",
+    "우울": "sad",
+
+    "분노": "angry",
+    "화남": "angry",
+    "화남/분노": "angry",
+
+    "부끄러움": "shy",
+    "쑥스러움": "shy",
+
+    "공허": "empty",
+    "허무": "empty",
+}
+
+
+def normalize_emotion_for_header(emotion: Optional[str]) -> Optional[str]:
+    """
+    HTTP 헤더에 넣기 위해 감정 문자열을 정제.
+    - 한글 감정은 영어 코드로 매핑
+    - 여전히 non-ascii 이면 헤더에 넣지 않음
+    """
+    if not emotion:
+        return None
+
+    emotion_str = str(emotion)
+    emotion_en = EMOTION_KO_TO_EN.get(emotion_str, emotion_str)
+
+    # 헤더는 실제로 ascii(latin-1)만 안전하므로 non-ascii면 스킵
+    if emotion_en.isascii():
+        return emotion_en
+    return None
+
+
+# ============================
 # Pydantic 모델 (JSON 검증용)
 # ============================
 
@@ -33,6 +75,7 @@ class DiaryData(BaseModel):
 
 
 class BoostRequest(BaseModel):
+    # JSON에 user_id가 없어도 되도록 default=None + extra="ignore"
     user_id: Optional[str] = None
     code: int
     message: str
@@ -81,9 +124,8 @@ async def boost(
     # TTS 생성
     generate_tts_to_file(prompt, out_path)
 
-    emotion = None
-    if diary_data:
-        emotion = diary_data.get("emotion")
+    emotion = diary_data.get("emotion") if diary_data else None
+    emotion_header = normalize_emotion_for_header(emotion)
 
     # 파일 직접 응답
     resp = FileResponse(
@@ -95,8 +137,8 @@ async def boost(
     # 메타데이터를 헤더에 전달
     resp.headers["X-User-Id"] = user_id
     resp.headers["X-Diary-Used"] = "true" if diary_data is not None else "false"
-    if emotion:
-        resp.headers["X-Emotion"] = emotion
+    if emotion_header:
+        resp.headers["X-Emotion"] = emotion_header
 
     return resp
 
@@ -125,6 +167,7 @@ async def boost_from_json(req: BoostRequest):
     generate_tts_to_file(prompt, out_path)
 
     emotion = diary.get("emotion")
+    emotion_header = normalize_emotion_for_header(emotion)
 
     resp = FileResponse(
         path=str(out_path),
@@ -134,8 +177,8 @@ async def boost_from_json(req: BoostRequest):
 
     resp.headers["X-User-Id"] = user_id
     resp.headers["X-Diary-Used"] = "true"
-    if emotion:
-        resp.headers["X-Emotion"] = emotion
+    if emotion_header:
+        resp.headers["X-Emotion"] = emotion_header
 
     return resp
 
@@ -180,6 +223,7 @@ async def boost_from_json_file(file: UploadFile = File(..., description="일기 
     generate_tts_to_file(prompt, out_path)
 
     emotion = diary.get("emotion")
+    emotion_header = normalize_emotion_for_header(emotion)
 
     resp = FileResponse(
         path=str(out_path),
@@ -190,7 +234,7 @@ async def boost_from_json_file(file: UploadFile = File(..., description="일기 
     resp.headers["X-User-Id"] = user_id
     resp.headers["X-Diary-Used"] = "true"
     resp.headers["X-Uploaded-Filename"] = file.filename or ""
-    if emotion:
-        resp.headers["X-Emotion"] = emotion
+    if emotion_header:
+        resp.headers["X-Emotion"] = emotion_header
 
     return resp
