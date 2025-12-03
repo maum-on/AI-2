@@ -60,6 +60,21 @@ def normalize_emotion_for_header(emotion: Optional[str]) -> Optional[str]:
     return None
 
 
+def normalize_user_id_for_header(user_id: Optional[str]) -> Optional[str]:
+    """
+    HTTP 헤더에 안전하게 넣을 수 있도록 user_id 정제.
+    - ASCII(영문/숫자 등)만 허용
+    - 한글 ID(예: '김가은')이면 헤더에 넣지 않는다.
+    """
+    if not user_id:
+        return None
+
+    uid_str = str(user_id)
+    if uid_str.isascii():
+        return uid_str
+    return None
+
+
 # ============================
 # Pydantic 모델 (JSON 검증용)
 # ============================
@@ -127,6 +142,7 @@ async def boost(
 
     emotion = diary_data.get("emotion") if diary_data else None
     emotion_header = normalize_emotion_for_header(emotion)
+    user_id_header = normalize_user_id_for_header(user_id)
 
     resp = FileResponse(
         path=str(out_path),
@@ -134,7 +150,10 @@ async def boost(
         filename=file_name,
     )
 
-    resp.headers["X-User-Id"] = user_id
+    # ⚠️ 한글 user_id면 헤더에 넣지 않음 (UnicodeEncodeError 방지)
+    if user_id_header:
+        resp.headers["X-User-Id"] = user_id_header
+
     resp.headers["X-Diary-Used"] = "true" if diary_data is not None else "false"
     if emotion_header:
         resp.headers["X-Emotion"] = emotion_header
@@ -166,6 +185,7 @@ async def boost_from_json(req: BoostRequest):
 
     emotion = diary.get("emotion")
     emotion_header = normalize_emotion_for_header(emotion)
+    user_id_header = normalize_user_id_for_header(user_id)
 
     resp = FileResponse(
         path=str(out_path),
@@ -173,7 +193,10 @@ async def boost_from_json(req: BoostRequest):
         filename=file_name,
     )
 
-    resp.headers["X-User-Id"] = user_id
+    # ⚠️ 한글 user_id면 헤더에 넣지 않음
+    if user_id_header:
+        resp.headers["X-User-Id"] = user_id_header
+
     resp.headers["X-Diary-Used"] = "true"
     if emotion_header:
         resp.headers["X-Emotion"] = emotion_header
@@ -226,7 +249,6 @@ async def boost_from_json_file(file: UploadFile = File(..., description="일기 
         filename=file_name,
     )
 
-    resp.headers["X-User-Id"] = user_id
     resp.headers["X-Diary-Used"] = "true"
     resp.headers["X-Uploaded-Filename"] = file.filename or ""
     if emotion_header:
