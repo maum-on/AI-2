@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .prompt_engine import build_boost_prompt
+from .prompt_engine import build_boost_message
 from .tts_engine import generate_tts_to_file, ping_openai
 from .utils import get_data_dir
 from .main import fetch_latest_diary  # user_id 방식에서 사용
@@ -55,7 +55,6 @@ def normalize_emotion_for_header(emotion: Optional[str]) -> Optional[str]:
     emotion_str = str(emotion)
     emotion_en = EMOTION_KO_TO_EN.get(emotion_str, emotion_str)
 
-    # 헤더는 실제로 ascii(latin-1)만 안전하므로 non-ascii면 스킵
     if emotion_en.isascii():
         return emotion_en
     return None
@@ -101,7 +100,7 @@ async def ping():
 
 # ============================
 # 1) user_id로 일기 가져오는 버전
-#    ➜ mp3 바이너리 직접 응답
+#    ➜ LLM으로 멘트 생성 → mp3 바이너리 직접 응답
 # ============================
 
 @router.get("")
@@ -110,31 +109,31 @@ async def boost(
 ):
     """
     1) 백엔드에서 최신 일기/요약 정보 가져오기
-    2) 프롬프트 생성
+    2) LLM으로 아침 응원 멘트 텍스트 생성
     3) TTS로 mp3 생성
     4) mp3 바이너리 직접 응답 + 메타데이터는 헤더에
     """
     diary_data: Optional[Dict[str, Any]] = fetch_latest_diary(user_id)
-    prompt = build_boost_prompt(user_id=user_id, diary=diary_data)
+
+    # 🔹 여기서 실제 응원 멘트를 생성
+    boost_text = build_boost_message(user_id=user_id, diary=diary_data)
 
     out_dir = get_data_dir()
     file_name = f"{user_id}_{uuid4().hex}.mp3"
     out_path = out_dir / file_name
 
-    # TTS 생성
-    generate_tts_to_file(prompt, out_path)
+    # TTS는 최종 멘트 텍스트만 읽도록
+    generate_tts_to_file(boost_text, out_path)
 
     emotion = diary_data.get("emotion") if diary_data else None
     emotion_header = normalize_emotion_for_header(emotion)
 
-    # 파일 직접 응답
     resp = FileResponse(
         path=str(out_path),
         media_type="audio/mpeg",
         filename=file_name,
     )
 
-    # 메타데이터를 헤더에 전달
     resp.headers["X-User-Id"] = user_id
     resp.headers["X-Diary-Used"] = "true" if diary_data is not None else "false"
     if emotion_header:
@@ -145,26 +144,25 @@ async def boost(
 
 # ============================
 # 2) JSON Body로 직접 보내는 버전
-#    ➜ mp3 바이너리 직접 응답
+#    ➜ LLM → TTS → mp3 바이너리 직접 응답
 # ============================
 
 @router.post("/from-json")
 async def boost_from_json(req: BoostRequest):
     """
     클라이언트/백엔드에서 만든 일기 요약 JSON을 Body로 직접 보내는 버전.
-    mp3 바이너리를 그대로 응답하고,
-    감정 정보 등은 헤더에 담아준다.
+    LLM으로 응원 멘트를 생성하고, 그 텍스트를 TTS로 읽어서 mp3를 반환한다.
     """
     user_id = req.user_id or "anonymous"
     diary = req.data.model_dump()
 
-    prompt = build_boost_prompt(user_id=user_id, diary=diary)
+    boost_text = build_boost_message(user_id=user_id, diary=diary)
 
     out_dir = get_data_dir()
     file_name = f"{user_id}_{uuid4().hex}.mp3"
     out_path = out_dir / file_name
 
-    generate_tts_to_file(prompt, out_path)
+    generate_tts_to_file(boost_text, out_path)
 
     emotion = diary.get("emotion")
     emotion_header = normalize_emotion_for_header(emotion)
@@ -185,27 +183,24 @@ async def boost_from_json(req: BoostRequest):
 
 # ============================
 # 3) JSON 파일 업로드 버전
-#    ➜ mp3 바이너리 직접 응답
+#    ➜ LLM → TTS → mp3 바이너리 직접 응답
 # ============================
 
 @router.post("/from-json-file")
 async def boost_from_json_file(file: UploadFile = File(..., description="일기 요약 JSON 파일")):
     """
     JSON 파일(.json)을 업로드해서 처리하는 버전.
-    mp3 바이너리를 바로 응답하고, 메타데이터는 헤더에 담는다.
+    LLM으로 응원 멘트를 생성하고, 그 텍스트를 TTS로 읽어서 mp3를 반환한다.
     """
-    # 1) 파일 타입 기본 체크
     if file.content_type not in ("application/json", "text/json", "application/octet-stream"):
         raise HTTPException(status_code=400, detail="JSON 파일을 업로드해주세요.")
 
-    # 2) 파일 내용 읽기
     raw_bytes = await file.read()
     try:
         payload = json.loads(raw_bytes.decode("utf-8"))
     except Exception:
         raise HTTPException(status_code=400, detail="JSON 파싱에 실패했습니다.")
 
-    # 3) Pydantic으로 검증
     try:
         req = BoostRequest(**payload)
     except Exception as e:
@@ -214,13 +209,13 @@ async def boost_from_json_file(file: UploadFile = File(..., description="일기 
     user_id = req.user_id or "anonymous"
     diary = req.data.model_dump()
 
-    prompt = build_boost_prompt(user_id=user_id, diary=diary)
+    boost_text = build_boost_message(user_id=user_id, diary=diary)
 
     out_dir = get_data_dir()
     file_name = f"{user_id}_{uuid4().hex}.mp3"
     out_path = out_dir / file_name
 
-    generate_tts_to_file(prompt, out_path)
+    generate_tts_to_file(boost_text, out_path)
 
     emotion = diary.get("emotion")
     emotion_header = normalize_emotion_for_header(emotion)
